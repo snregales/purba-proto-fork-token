@@ -3,7 +3,7 @@
 #   the decision:  docs/decisions/liability-is-recorded-from-the-act-that-makes-it-true.md
 #   what you owe:  CONTRIBUTING.md
 #
-# Four things below are easy to change and hard to debug. Each one says why.
+# The traps below are easy to trip and hard to debug. Each one says why.
 name: Sign-off
 
 on:
@@ -24,8 +24,6 @@ concurrency:
   # Nothing runs again to add one.
   cancel-in-progress: false
 
-# Both jobs talk to the same pull request through `gh`, so these sit here
-# rather than once in each job.
 env:
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   GH_REPO: ${{ github.repository }}
@@ -96,9 +94,8 @@ jobs:
           # does not.
           export TRAILER="Accepted-by: $approver <$approver_id+$approver@users.noreply.github.com>"
 
-          # The branch this pull request targets, not `main`. A pull request
-          # onto any other branch would otherwise be measured from the wrong
-          # place, and the job would rewrite commits it does not own.
+          # The branch this pull request targets, not `main`. Measuring from
+          # `main` would make the job rewrite commits it does not own.
           git fetch --quiet origin "$BASE_REF"
           base=$(git merge-base FETCH_HEAD HEAD)
           before=$(git rev-parse HEAD)

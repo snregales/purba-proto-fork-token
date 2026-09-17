@@ -1,0 +1,30 @@
+name: Origin
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+concurrency:
+  group: origin-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  origin:
+    name: Origin
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Refuse a commit without the origin trailer
+        run: |
+          set -euo pipefail
+          missing=$(git rev-list HEAD^1..HEAD^2 | while read -r sha; do
+            if ! git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -q '<.*@.*>'; then
+              git log -1 --format='%h %s' "$sha"
+            fi
+          done)
+          if [ -n "$missing" ]; then
+            echo "::error::these commits carry no Signed-off-by trailer:"
+            echo "$missing"
+            exit 1
+          fi
+          echo "every commit on this branch carries the trailer"

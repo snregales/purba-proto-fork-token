@@ -37,6 +37,8 @@ jobs:
       # This job rewrites the commits, and the new commits have no check runs
       # on them. So the job reports the required check itself.
       checks: write
+      # ARM R needs this to restart a run.
+      actions: write
     # Never call this job `Sign-off`. A job writes a check run under its own
     # name, so that name must not be the required one. The last step reports
     # `Sign-off` on purpose instead.
@@ -136,6 +138,27 @@ jobs:
             --jq '.html_url'
 
           echo "recorded acceptance by $approver on $head_sha"
+
+          # ARM R, purba #36. The force-push above makes runs GitHub will not
+          # start: they conclude action_required with zero jobs. A person
+          # restarts them today. This asks whether this job's own token can.
+          if [ "$head_sha" != "$before" ]; then
+            stalled=""
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+              stalled=$(gh api "repos/$GH_REPO/actions/runs?head_sha=$head_sha&per_page=100" \
+                --jq '[.workflow_runs[] | select(.conclusion == "action_required") | select(.name != "Sign-off") | .id] | .[]' || true)
+              if [ -n "$stalled" ]; then break; fi
+              sleep 6
+            done
+            echo "stalled runs on $head_sha: ${stalled:-none}"
+            for id in $stalled; do
+              if gh api -X POST "repos/$GH_REPO/actions/runs/$id/rerun" >/dev/null 2>&1; then
+                echo "restarted $id"
+              else
+                echo "could not restart $id"
+              fi
+            done
+          fi
 
   decision-records:
     permissions:

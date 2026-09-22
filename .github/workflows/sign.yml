@@ -41,6 +41,9 @@ jobs:
     # name, so that name must not be the required one. The last step reports
     # `Sign-off` on purpose instead.
     name: sign
+    # ARM I, purba #36. The head this job writes, for the job below.
+    outputs:
+      head_sha: ${{ steps.accept.outputs.head_sha }}
     runs-on: ubuntu-latest
     # Bounded, because `cancel-in-progress` is false and a hung run would hold
     # the queue for six hours.
@@ -64,6 +67,7 @@ jobs:
           fetch-depth: 0
 
       - name: Write the acceptance trailer into every commit
+        id: accept
         run: |
           set -euo pipefail
 
@@ -137,6 +141,9 @@ jobs:
 
           echo "recorded acceptance by $approver on $head_sha"
 
+          # ARM I. The job below reads this.
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+
   decision-records:
     permissions:
       # This job writes a comment on the pull request. The sign job only reads
@@ -199,3 +206,54 @@ jobs:
           Resolve this thread when you have judged all three.
           $marker"
           echo "posted the decision-record thread"
+
+  # ARM I, purba #36. The inverted path: the gate runs after the rewrite and
+  # reports on the head the sign job wrote.
+  #
+  # Never call this job `Quality`. A job writes a check run under its own name,
+  # and that check run lands on the run's head, which is the head BEFORE the
+  # rewrite. The required context has to be posted by hand, on the new head.
+  quality-after-sign:
+    needs: sign
+    # Empty when no approval stood, because the sign job stops before it
+    # writes anything.
+    if: needs.sign.outputs.head_sha != ''
+    permissions:
+      contents: read
+      checks: write
+    name: quality-after-sign
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      HEAD_SHA: ${{ needs.sign.outputs.head_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sign.outputs.head_sha }}
+
+      - name: Run the gate and report Quality on the head the sign job wrote
+        run: |
+          set -euo pipefail
+
+          # A real gate runs the mise tasks here. This file is the knob that
+          # makes it fail, so the refusal can be proved as well as the pass.
+          if [ -f FAIL_QUALITY ]; then
+            conclusion=failure
+            summary="The gate refused the tree at $HEAD_SHA."
+          else
+            conclusion=success
+            summary="The gate accepted the tree at $HEAD_SHA."
+          fi
+
+          echo "checked $(git rev-parse HEAD), conclusion=$conclusion"
+
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name="Quality" \
+            -f head_sha="$HEAD_SHA" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f "output[title]=Quality" \
+            -f "output[summary]=$summary" \
+            --jq '.html_url'
+
+          [ "$conclusion" = success ]

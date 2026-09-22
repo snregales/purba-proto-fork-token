@@ -37,6 +37,8 @@ jobs:
       # This job rewrites the commits, and the new commits have no check runs
       # on them. So the job reports the required check itself.
       checks: write
+      # ARM D needs this to dispatch a workflow.
+      actions: write
     # Never call this job `Sign-off`. A job writes a check run under its own
     # name, so that name must not be the required one. The last step reports
     # `Sign-off` on purpose instead.
@@ -136,6 +138,14 @@ jobs:
             --jq '.html_url'
 
           echo "recorded acceptance by $approver on $head_sha"
+
+          # ARM D, purba #36. workflow_dispatch is the documented exception to
+          # the rule that this token starts no workflow. The dispatched run
+          # takes the branch tip, which is the head this job just wrote.
+          if [ "$head_sha" != "$before" ]; then
+            gh workflow run quality.yml --ref "$HEAD_REF"
+            echo "dispatched quality.yml on $HEAD_REF"
+          fi
 
   decision-records:
     permissions:

@@ -1,0 +1,31 @@
+# The instrument for purba #36. An ordinary job whose name is the status
+# context, so it reports exactly the way a real quality gate would.
+#
+# workflow_dispatch is here for the dispatch arm. A dispatch is the one event
+# GitHub starts from a workflow's own token.
+name: Quality
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    # This name is the required context. Nothing else reports it.
+    name: Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Say which head this ran on
+        run: |
+          set -euo pipefail
+          echo "event   = ${{ github.event_name }}"
+          echo "head    = $(git rev-parse HEAD)"
+          echo "branch  = $(git rev-parse --abbrev-ref HEAD)"
+          echo "trailer = $(git log -1 --format='%(trailers:key=Accepted-by,valueonly)')"

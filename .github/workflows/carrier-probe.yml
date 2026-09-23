@@ -1,0 +1,139 @@
+# purba #36, arm V — the verdict carrier.
+#
+# Reproduces the sign job's rewrite without needing an approval, then asks
+# whether a verdict already earned on the old head can be carried to the new
+# one. The approval is not what is under test; the rewrite is.
+#
+# Falsifiable on purpose: `mutate_tree` makes the rewrite change the tree, and
+# the carrier must then REFUSE to carry. A carrier that always carries is not
+# a gate.
+name: Carrier probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: the pull request to rewrite
+        required: true
+      mutate_tree:
+        description: also change a file, so the trees differ
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  checks: write
+  pull-requests: read
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_REPO: ${{ github.repository }}
+  PR: ${{ inputs.pr }}
+
+jobs:
+  probe:
+    name: probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Read the branch this pull request carries
+        id: pr
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/pulls/$PR" \
+            --jq '"head_ref=" + .head.ref, "base_ref=" + .base.ref, "base_sha=" + .base.sha' \
+            >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_ref }}
+          fetch-depth: 0
+
+      - name: Rewrite the branch the way the sign job does, and push with this token
+        id: rewrite
+        env:
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          MUTATE: ${{ inputs.mutate_tree }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch --quiet origin "$BASE_REF"
+          base=$(git merge-base FETCH_HEAD HEAD)
+          before=$(git rev-parse HEAD)
+
+          # Unique per run, so a second dispatch still changes every commit.
+          export TRAILER="Probe-run: ${{ github.run_id }}"
+          git rebase "$base" --exec 'git commit --amend --no-edit --trailer "$TRAILER"'
+
+          if [ "$MUTATE" = "true" ]; then
+            date -u +%s > probe-mutation.txt
+            git add probe-mutation.txt
+            git commit --amend --no-edit
+          fi
+
+          after=$(git rev-parse HEAD)
+          git push --force origin "HEAD:$HEAD_REF"
+
+          {
+            echo "before=$before"
+            echo "after=$after"
+            echo "before_tree=$(git rev-parse "$before^{tree}")"
+            echo "after_tree=$(git rev-parse "$after^{tree}")"
+            echo "base_sha=$base"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Carry the verdicts the tree still answers for
+        env:
+          BEFORE: ${{ steps.rewrite.outputs.before }}
+          AFTER: ${{ steps.rewrite.outputs.after }}
+          BEFORE_TREE: ${{ steps.rewrite.outputs.before_tree }}
+          AFTER_TREE: ${{ steps.rewrite.outputs.after_tree }}
+          BASE_BEFORE: ${{ steps.pr.outputs.base_sha }}
+          BASE_AFTER: ${{ steps.rewrite.outputs.base_sha }}
+          # Declared, never detected. A gate is carryable when its answer is a
+          # function of the tree alone. `Origin` reads commit messages, which
+          # the rewrite above just changed, so it is absent from this list.
+          CARRYABLE: Quality
+        run: |
+          set -euo pipefail
+          start=$(date -u +%s%3N)
+
+          echo "before      $BEFORE  tree $BEFORE_TREE"
+          echo "after       $AFTER  tree $AFTER_TREE"
+          echo "base        $BASE_BEFORE -> $BASE_AFTER"
+
+          if [ "$BEFORE_TREE" != "$AFTER_TREE" ]; then
+            echo "::warning::the tree changed, so no verdict is carried"
+            echo "carried=0"
+            exit 0
+          fi
+          if [ "$BASE_BEFORE" != "$BASE_AFTER" ]; then
+            echo "::warning::the base moved, so no verdict is carried"
+            exit 0
+          fi
+
+          carried=0
+          for ctx in $CARRYABLE; do
+            verdict=$(gh api "repos/$GH_REPO/commits/$BEFORE/check-runs" --paginate \
+              --jq --arg c "$ctx" '[.check_runs[] | select(.name == $c)] | last | .conclusion // empty')
+            if [ -z "$verdict" ]; then
+              echo "$ctx has no verdict on $BEFORE, so there is nothing to carry"
+              continue
+            fi
+            gh api --method POST "repos/$GH_REPO/check-runs" \
+              -f name="$ctx" \
+              -f head_sha="$AFTER" \
+              -f status=completed \
+              -f conclusion="$verdict" \
+              -f "output[title]=$ctx, carried" \
+              -f "output[summary]=The tree at this commit is \`$AFTER_TREE\`, which is the tree this check already answered for at \`$BEFORE\`." \
+              --jq '.html_url'
+            carried=$((carried + 1))
+            echo "carried $ctx=$verdict"
+          done
+
+          echo "carried $carried verdicts in $(( $(date -u +%s%3N) - start ))ms"

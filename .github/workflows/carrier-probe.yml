@@ -110,10 +110,10 @@ jobs:
             echo "::warning::the tree changed, so no verdict is carried"
             exit 0
           fi
-          if [ "$BASE_BEFORE" != "$BASE_AFTER" ]; then
-            echo "::warning::the base moved, so no verdict is carried"
-            exit 0
-          fi
+          # No base comparison. A verdict computed against an older `main` is
+          # already refused by strict_required_status_checks_policy, which
+          # blocks a branch that is behind. The tree is the only indicator
+          # this job needs.
 
           carried=0
           for ctx in $CARRYABLE; do

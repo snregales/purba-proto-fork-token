@@ -108,7 +108,6 @@ jobs:
 
           if [ "$BEFORE_TREE" != "$AFTER_TREE" ]; then
             echo "::warning::the tree changed, so no verdict is carried"
-            echo "carried=0"
             exit 0
           fi
           if [ "$BASE_BEFORE" != "$BASE_AFTER" ]; then
@@ -118,8 +117,8 @@ jobs:
 
           carried=0
           for ctx in $CARRYABLE; do
-            verdict=$(gh api "repos/$GH_REPO/commits/$BEFORE/check-runs" --paginate \
-              --jq --arg c "$ctx" '[.check_runs[] | select(.name == $c)] | last | .conclusion // empty')
+            verdict=$(gh api "repos/$GH_REPO/commits/$BEFORE/check-runs?per_page=100" |
+              jq -r --arg c "$ctx" '[.check_runs[] | select(.name == $c)] | last | .conclusion // empty')
             if [ -z "$verdict" ]; then
               echo "$ctx has no verdict on $BEFORE, so there is nothing to carry"
               continue

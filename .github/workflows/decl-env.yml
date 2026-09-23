@@ -1,0 +1,12 @@
+name: Decl env
+on:
+  push:
+    branches: [proto/36-declare]
+jobs:
+  gate:
+    name: Decl env
+    runs-on: ubuntu-latest
+    env:
+      CARRYABLE: tree
+    steps:
+      - run: echo "the declaration is an env entry, CARRYABLE=$CARRYABLE"

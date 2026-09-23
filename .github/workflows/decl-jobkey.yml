@@ -1,0 +1,11 @@
+name: Decl jobkey
+on:
+  push:
+    branches: [proto/36-declare]
+jobs:
+  gate:
+    name: Decl jobkey
+    runs-on: ubuntu-latest
+    carryable: tree
+    steps:
+      - run: echo "a custom key sits at job level"
